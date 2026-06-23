@@ -3,7 +3,6 @@ import os
 import pandas as pd
 from openai import OpenAI
 from dotenv import load_dotenv
-from prompt_templates import RAG_PROMPT
 
 load_dotenv()
 
@@ -13,18 +12,20 @@ client = OpenAI(
     base_url="https://api.deepseek.com/v1"
 )
 
-# 加载CSV数据作为知识库（不需要向量数据库）
+# 加载CSV数据作为知识库
 def load_knowledge_base():
     """从CSV加载知识库"""
     try:
         df = pd.read_csv('data/campus_data.csv', encoding='gbk')
+        print(f"✅ 加载了 {len(df)} 条数据")
         return df
     except:
         try:
             df = pd.read_csv('data/campus_data.csv', encoding='utf-8')
+            print(f"✅ 加载了 {len(df)} 条数据")
             return df
         except Exception as e:
-            print(f"加载数据失败：{e}")
+            print(f"❌ 加载数据失败：{e}")
             return None
 
 # 加载知识库
@@ -33,15 +34,15 @@ knowledge_df = load_knowledge_base()
 def search_knowledge(question, k=5):
     """简单的关键词检索"""
     if knowledge_df is None:
+        print("⚠️ 知识库未加载")
         return []
     
     results = []
     question_lower = question.lower()
     
     for _, row in knowledge_df.iterrows():
-        # 计算匹配分数（关键词匹配）
         score = 0
-        text = row['question'] + row['answer']
+        text = str(row['question']) + str(row['answer'])
         text_lower = text.lower()
         
         # 关键词匹配
@@ -51,15 +52,19 @@ def search_knowledge(question, k=5):
                 score += 1
         
         # 类别匹配
-        if row['category'] in question_lower:
+        if str(row['category']) in question_lower:
             score += 2
+        
+        # 如果问题关键词匹配，额外加分
+        if any(kw in str(row['question']).lower() for kw in keywords if len(kw) > 1):
+            score += 3
         
         if score > 0:
             results.append({
                 'question': row['question'],
                 'answer': row['answer'],
                 'category': row['category'],
-                'source': row['source'],
+                'source': row.get('source', ''),
                 'score': score
             })
     
@@ -68,7 +73,7 @@ def search_knowledge(question, k=5):
     return results[:k]
 
 def rag_answer(question, k=5):
-    """RAG问答函数（简化版）"""
+    """RAG问答函数"""
     try:
         # 1. 检索相关文档
         docs = search_knowledge(question, k=k)
@@ -93,10 +98,10 @@ def rag_answer(question, k=5):
 {question}
 
 【回答要求】
-1. **严格基于上述规则回答**，不要编造
-2. 如果规则中有相关信息，**直接回答**，不要说"我不确定"
-3. 如果规则中没有相关信息，才说"建议咨询辅导员"
-4. 回答要**具体、完整**，包含时间、地点、流程等关键信息
+1. 严格基于上述规则回答，不要编造
+2. 如果规则中有相关信息，直接回答
+3. 如果规则中没有相关信息，说"建议咨询辅导员"
+4. 回答要具体、完整，包含时间、地点、流程等关键信息
 5. 涉及数字（绩点、天数、金额）必须准确引用
 
 【回答】
@@ -144,10 +149,10 @@ def rag_answer_with_source(question, k=5):
 {question}
 
 【回答要求】
-1. **严格基于上述规则回答**，不要编造
-2. 如果规则中有相关信息，**直接回答**，不要说"我不确定"
-3. 如果规则中没有相关信息，才说"建议咨询辅导员"
-4. 回答要**具体、完整**，包含时间、地点、流程等关键信息
+1. 严格基于上述规则回答，不要编造
+2. 如果规则中有相关信息，直接回答
+3. 如果规则中没有相关信息，说"建议咨询辅导员"
+4. 回答要具体、完整
 
 【回答】
 """
