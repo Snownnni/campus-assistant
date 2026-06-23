@@ -1,13 +1,8 @@
 # src/rag.py
 import os
-
-# 强制使用国内镜像
-os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-
+import pandas as pd
 from openai import OpenAI
 from dotenv import load_dotenv
-from langchain_community.vectorstores import Chroma
-from langchain_openai import OpenAIEmbeddings  # 使用OpenAI嵌入
 from prompt_templates import RAG_PROMPT
 
 load_dotenv()
@@ -18,65 +13,73 @@ client = OpenAI(
     base_url="https://api.deepseek.com/v1"
 )
 
-# 使用在线嵌入模型（OpenAI兼容格式）
-# 注意：DeepSeek不支持嵌入，所以这里使用智谱AI或OpenAI的嵌入
-# 如果没有其他API，可以使用模拟嵌入
-def get_embeddings():
-    """获取嵌入模型"""
+# 加载CSV数据作为知识库（不需要向量数据库）
+def load_knowledge_base():
+    """从CSV加载知识库"""
     try:
-        # 尝试使用智谱AI嵌入（需要额外API Key）
-        # 或者使用OpenAI嵌入（需要OpenAI API Key）
-        # 由于DeepSeek不支持嵌入，我们使用模拟嵌入
-        from langchain_community.embeddings import FakeEmbeddings
-        return FakeEmbeddings(size=384)
+        df = pd.read_csv('data/campus_data.csv', encoding='gbk')
+        return df
     except:
-        # 如果上面都失败，使用本地模型（但会慢一些）
-        from langchain_community.embeddings import HuggingFaceEmbeddings
-        return HuggingFaceEmbeddings(
-            model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-            model_kwargs={'device': 'cpu'},
-            encode_kwargs={'normalize_embeddings': True}
-        )
+        try:
+            df = pd.read_csv('data/campus_data.csv', encoding='utf-8')
+            return df
+        except Exception as e:
+            print(f"加载数据失败：{e}")
+            return None
 
-# 加载嵌入模型
-embeddings = get_embeddings()
+# 加载知识库
+knowledge_df = load_knowledge_base()
 
-def load_vector_db():
-    """加载向量数据库"""
-    try:
-        vector_db = Chroma(
-            persist_directory="./vector_db",
-            embedding_function=embeddings
-        )
-        return vector_db
-    except Exception as e:
-        print(f"⚠️ 向量数据库加载失败：{e}")
-        # 创建空向量库
-        from langchain_community.vectorstores import Chroma
-        vector_db = Chroma.from_texts(
-            texts=["暂无数据"],
-            embedding=embeddings,
-            persist_directory="./vector_db"
-        )
-        vector_db.persist()
-        return vector_db
-
-# 加载向量数据库
-vector_db = load_vector_db()
+def search_knowledge(question, k=5):
+    """简单的关键词检索"""
+    if knowledge_df is None:
+        return []
+    
+    results = []
+    question_lower = question.lower()
+    
+    for _, row in knowledge_df.iterrows():
+        # 计算匹配分数（关键词匹配）
+        score = 0
+        text = row['question'] + row['answer']
+        text_lower = text.lower()
+        
+        # 关键词匹配
+        keywords = question_lower.split()
+        for kw in keywords:
+            if len(kw) > 1 and kw in text_lower:
+                score += 1
+        
+        # 类别匹配
+        if row['category'] in question_lower:
+            score += 2
+        
+        if score > 0:
+            results.append({
+                'question': row['question'],
+                'answer': row['answer'],
+                'category': row['category'],
+                'source': row['source'],
+                'score': score
+            })
+    
+    # 按分数排序
+    results.sort(key=lambda x: x['score'], reverse=True)
+    return results[:k]
 
 def rag_answer(question, k=5):
-    """RAG问答函数"""
+    """RAG问答函数（简化版）"""
     try:
-        # 1. 检索
-        docs = vector_db.similarity_search(question, k=k)
+        # 1. 检索相关文档
+        docs = search_knowledge(question, k=k)
+        
+        if not docs:
+            return "抱歉，我没有找到相关信息。建议你咨询辅导员或查看学生手册。"
         
         # 2. 构建上下文
         context_parts = []
         for i, doc in enumerate(docs, 1):
-            q = doc.metadata.get('question', '')
-            answer = doc.page_content
-            category = doc.metadata.get('category', '')
-            context_parts.append(f"【{category}】问题：{q}\n答案：{answer}")
+            context_parts.append(f"【{doc['category']}】问题：{doc['question']}\n答案：{doc['answer']}")
         
         context = "\n\n".join(context_parts)
         
@@ -114,20 +117,20 @@ def rag_answer(question, k=5):
 def rag_answer_with_source(question, k=5):
     """带检索来源的RAG问答"""
     try:
-        docs = vector_db.similarity_search_with_score(question, k=k)
+        docs = search_knowledge(question, k=k)
+        
+        if not docs:
+            return "抱歉，我没有找到相关信息。建议你咨询辅导员或查看学生手册。", []
         
         context_parts = []
         sources = []
-        for i, (doc, score) in enumerate(docs, 1):
-            q = doc.metadata.get('question', '')
-            answer = doc.page_content
-            category = doc.metadata.get('category', '')
-            context_parts.append(f"【{category}】问题：{q}\n答案：{answer}")
+        for i, doc in enumerate(docs, 1):
+            context_parts.append(f"【{doc['category']}】问题：{doc['question']}\n答案：{doc['answer']}")
             sources.append({
-                'question': q,
-                'answer': answer,
-                'score': score,
-                'category': category
+                'question': doc['question'],
+                'answer': doc['answer'],
+                'score': doc['score'],
+                'category': doc['category']
             })
         
         context = "\n\n".join(context_parts)
