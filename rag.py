@@ -55,10 +55,6 @@ def search_knowledge(question, k=5):
         if str(row['category']) in question_lower:
             score += 2
         
-        # 如果问题关键词匹配，额外加分
-        if any(kw in str(row['question']).lower() for kw in keywords if len(kw) > 1):
-            score += 3
-        
         if score > 0:
             results.append({
                 'question': row['question'],
@@ -75,20 +71,17 @@ def search_knowledge(question, k=5):
 def rag_answer(question, k=5):
     """RAG问答函数"""
     try:
-        # 1. 检索相关文档
         docs = search_knowledge(question, k=k)
         
         if not docs:
             return "抱歉，我没有找到相关信息。建议你咨询辅导员或查看学生手册。"
         
-        # 2. 构建上下文
         context_parts = []
         for i, doc in enumerate(docs, 1):
             context_parts.append(f"【{doc['category']}】问题：{doc['question']}\n答案：{doc['answer']}")
         
         context = "\n\n".join(context_parts)
         
-        # 3. 构建提示词
         prompt = f"""你是一个安徽交通职业技术学院的校园生活助手。请根据以下校园规则回答问题。
 
 【校园规则参考】
@@ -101,13 +94,11 @@ def rag_answer(question, k=5):
 1. 严格基于上述规则回答，不要编造
 2. 如果规则中有相关信息，直接回答
 3. 如果规则中没有相关信息，说"建议咨询辅导员"
-4. 回答要具体、完整，包含时间、地点、流程等关键信息
-5. 涉及数字（绩点、天数、金额）必须准确引用
+4. 回答要具体、完整
 
 【回答】
 """
         
-        # 4. 调用DeepSeek API
         response = client.chat.completions.create(
             model="deepseek-chat",
             messages=[{"role": "user", "content": prompt}],
